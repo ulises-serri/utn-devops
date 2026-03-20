@@ -1,0 +1,11 @@
+# Ignorar archivos de configuración de Vagrant
+.vagrant/
+
+#ignorar mi sitio
+.sitio/
+
+# Ignorar logs de error
+*.log
+
+# Si usas VS Code
+.vscode/
