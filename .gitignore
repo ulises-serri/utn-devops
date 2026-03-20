@@ -2,7 +2,7 @@
 .vagrant/
 
 #ignorar mi sitio
-.sitio/
+sitio/
 
 # Ignorar logs de error
 *.log
