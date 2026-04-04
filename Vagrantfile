@@ -1,49 +1,56 @@
 Vagrant.configure("2") do |config|
 
-  config.vm.box = "generic/ubuntu1804"
-  config.vm.box_version = "4.3.12"
+  config.vm.box = "generic/ubuntu2004"
 
+  # Puerto de Jenkins accesible desde el host
   config.vm.network "forwarded_port", guest: 8080, host: 8080
 
+  # Carpeta sincronizada: transfiere manifiestos y módulos Puppet al guest
   config.vm.synced_folder ".", "/vagrant"
 
   config.vm.provision "shell", inline: <<-SHELL
-    sudo apt update
+    set -e
 
-    # Eliminar Apache
-    sudo apt remove -y apache2
-    sudo apt autoremove -y
+    apt-get update
+    apt-get install -y wget curl ca-certificates gnupg
 
-    # Instalar dependencias
-    sudo apt install -y ca-certificates curl gnupg lsb-release
+    # Instalar Puppet (cliente y servidor en la misma VM) 
+    wget -q https://apt.puppetlabs.com/puppet7-release-focal.deb -O /tmp/puppet7-release-focal.deb
+    dpkg -i /tmp/puppet7-release-focal.deb
+    apt-get update
+    apt-get install -y puppet-agent puppetserver
 
-    # Agregar repo oficial Docker
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    export PATH="/opt/puppetlabs/bin:$PATH"
 
-    echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-    $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    # Gestionar usuario y grupo de Puppet 
+    if ! getent group puppet > /dev/null 2>&1; then
+      groupadd --system puppet
+    fi
+    if ! id puppet > /dev/null 2>&1; then
+      useradd --system --gid puppet --shell /sbin/nologin \
+              --home /var/lib/puppet puppet
+    fi
 
-    sudo apt update
+    # Transferir archivos de configuración y manifiestos de Puppet 
+    PUPPET_ENV="/etc/puppetlabs/code/environments/production"
+    cp -r /vagrant/puppet/manifests  "$PUPPET_ENV/"
+    cp -r /vagrant/puppet/modules/*  "$PUPPET_ENV/modules/"
 
-    # Instalar Docker moderno + Compose v2
-    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    # Setup del repositorio de Jenkins (previo a Puppet) 
+    # Se obtiene la clave por fingerprint desde el keyserver de Ubuntu
+    # (evita problemas con el formato del archivo descargado directamente)
+    apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 7198F4B714ABFC68
+    echo "deb https://pkg.jenkins.io/debian-stable binary/" \
+      > /etc/apt/sources.list.d/jenkins.list
+    apt-get update
 
-    sudo systemctl start docker
-    sudo systemctl enable docker
+    # Habilitar el agente de Puppet
+    /opt/puppetlabs/bin/puppet agent --enable
 
-    # Permisos
-    sudo usermod -aG docker vagrant
-
-    # Clonar app
-    cd /home/vagrant
-    git clone https://github.com/JesicaMaero/python-app-devops.git app
-
-    cd app
-
-    # Usar compose nuevo (SIN GUION)
-    sudo docker compose up -d
+    # Aplicar el manifiesto (modo masterless)
+    /opt/puppetlabs/bin/puppet apply \
+      "$PUPPET_ENV/manifests/site.pp" \
+      --modulepath "$PUPPET_ENV/modules"
 
   SHELL
 
